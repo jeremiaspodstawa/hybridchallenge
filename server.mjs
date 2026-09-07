@@ -18,7 +18,7 @@ const COMPANY_ID = 3854; // Urban Heroes Hamburg
 
 const FROM = process.env.LB_FROM || '2026-08-29';
 const TO = process.env.LB_TO || '2026-10-17';
-const KW1 = process.env.LB_KW1 || 'hybrid';
+const KW1 = process.env.LB_KW1 || 'hyrox';
 const KW1PTS = Number(process.env.LB_KW1PTS || 1);
 const KW2 = process.env.LB_KW2 || 'extended 90';
 const KW2PTS = Number(process.env.LB_KW2PTS || 2);
@@ -95,10 +95,16 @@ async function computeLeaderboard() {
   }
   const terms = [{ term: KW1, points: KW1PTS }, { term: KW2, points: KW2PTS }].filter(t => t.term && t.term.trim());
   const lowered = terms.map(t => escapeLiteral(t.term.trim().toLowerCase()));
-  const perTermSelect = lowered.map((t, i) => `
-    SUM(CASE WHEN LOWER(b.session_name) LIKE '%${t}%' AND b.status = 'ok' THEN 1 ELSE 0 END) AS gebucht_${i},
-    SUM(CASE WHEN LOWER(b.session_name) LIKE '%${t}%' AND b.status = 'ok' AND b.has_attended THEN 1 ELSE 0 END) AS teilgenommen_${i}`
-  ).join(',');
+  // Kategorien schliessen sich gegenseitig aus: spaeter gelistete Suchbegriffe
+  // gewinnen bei Ueberschneidung (z.B. "HYROX Extended 90" enthaelt sowohl
+  // "hyrox" als auch "extended 90" - zaehlt nur als "extended 90"), sonst
+  // wuerden solche Termine doppelt Punkte geben.
+  const perTermSelect = lowered.map((t, i) => {
+    const exclusion = lowered.slice(i + 1).map(other => ` AND LOWER(b.session_name) NOT LIKE '%${other}%'`).join('');
+    return `
+    SUM(CASE WHEN LOWER(b.session_name) LIKE '%${t}%'${exclusion} AND b.status = 'ok' THEN 1 ELSE 0 END) AS gebucht_${i},
+    SUM(CASE WHEN LOWER(b.session_name) LIKE '%${t}%'${exclusion} AND b.status = 'ok' AND b.has_attended THEN 1 ELSE 0 END) AS teilgenommen_${i}`;
+  }).join(',');
   const whereOr = lowered.map(t => `LOWER(b.session_name) LIKE '%${t}%'`).join(' OR ');
   const havingOr = lowered.map((_, i) => `gebucht_${i} > 0`).join(' OR ');
 
